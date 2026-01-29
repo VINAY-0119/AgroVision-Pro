@@ -3,7 +3,6 @@ from PIL import Image
 import numpy as np
 import tensorflow as tf
 
-# Load TFLite model and allocate tensors
 @st.cache_resource
 def load_tflite_model(model_path='plant_disease_recog_model_pwp_quantized.tflite'):
     interpreter = tf.lite.Interpreter(model_path=model_path)
@@ -17,15 +16,18 @@ output_details = interpreter.get_output_details()
 
 def preprocess_image(image: Image.Image, input_shape):
     image = image.resize((input_shape[1], input_shape[2]))
-    img_array = np.array(image).astype(np.float32)
-    img_array = img_array / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
+    img_array = np.array(image)
     
     if input_details[0]['dtype'] == np.uint8:
-        img_array = img_array * 255
-        img_array = img_array.astype(np.uint8)
+        if img_array.dtype != np.uint8:
+            img_array = img_array.astype(np.uint8)
+        img_array = np.expand_dims(img_array, axis=0)
+        return img_array
     
-    return img_array
+    else:
+        img_array = img_array.astype(np.float32) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        return img_array
 
 def predict(image: Image.Image):
     input_shape = input_details[0]['shape']
@@ -72,7 +74,9 @@ CLASS_NAMES = [
     'Tomato Target Spot',
     'Tomato Yellow Leaf Curl Virus',
     'Tomato Mosaic Virus',
-    'Tomato Healthy'
+    'Tomato Healthy',
+    'Class 38 Placeholder',
+    'Class 39 Placeholder'
 ]
 
 st.title("Plant Disease Detection (TFLite Model)")
