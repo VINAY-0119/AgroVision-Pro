@@ -1,178 +1,143 @@
 import streamlit as st
 import numpy as np
-from PIL import Image, UnidentifiedImageError
-import tflite_runtime.interpreter as tflite
-import google.generativeai as genai
+import tensorflow as tf
+from PIL import Image
 import time
-import logging
-
-# --- CONSTANTS ---
-CLASS_NAMES = [
-    "Apple Scab",
-    "Black Rot",
-    "Cedar Apple Rust",
-    "Healthy",
-    "Powdery Mildew",
-]
+import random
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Plant Disease Image Classifier",
+    page_title="Plant Disease Detector (TFLite)",
     page_icon="🌿",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# --- HELPER FUNCTIONS ---
+# --- LOAD TFLITE MODEL ---
+@st.cache_resource
+def load_tflite_model(model_path="plant_disease_recog_model_pwp_quantized.tflite"):
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    return interpreter
 
-def softmax(x):
-    e_x = np.exp(x - np.max(x))
-    return e_x / e_x.sum(axis=1, keepdims=True)
-
-def preprocess_image(image, interpreter, target_size=(224, 224)):
-    input_details = interpreter.get_input_details()
-    input_dtype = input_details[0]['dtype']
-
-    image = image.convert("RGB").resize(target_size)
-
-    if input_dtype == np.uint8:
-        img = np.array(image, dtype=np.uint8)
-    elif input_dtype == np.float32:
-        img = np.array(image, dtype=np.float32) / 255.0
-    else:
-        raise ValueError(f"Unsupported input dtype: {input_dtype}")
-
-    img = np.expand_dims(img, axis=0)
-    return img
-
-def predict(interpreter, img_array):
+# --- RUN INFERENCE ---
+def predict_with_tflite(interpreter, image_array):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
 
-    interpreter.set_tensor(input_details[0]['index'], img_array)
+    # Get input shape for resizing
+    input_shape = input_details[0]['shape']
+
+    # Convert and resize the image to expected size, normalize if needed
+    img = Image.fromarray(image_array)
+    img = img.resize((input_shape[2], input_shape[1]))
+    img = np.array(img) / 255.0  # Normalize to [0,1]
+    input_data = np.expand_dims(img.astype(np.float32), axis=0)
+
+    interpreter.set_tensor(input_details[0]['index'], input_data)
     interpreter.invoke()
+    output_data = interpreter.get_tensor(output_details[0]['index'])
+    return output_data[0]  # Output probabilities
 
-    preds = interpreter.get_tensor(output_details[0]['index'])
-    scale, zero_point = output_details[0]['quantization']
-    if scale and scale > 0:
-        preds = scale * (preds - zero_point)
+# --- HELPER FUNCTIONS ---
+def get_class_label(index):
+    # Replace these classes with your actual model classes
+    classes = [
+        "Healthy",
+        "Powdery Mildew",
+        "Leaf Rust",
+        "Early Blight",
+        "Late Blight",
+        "Bacterial Spot",
+        "Septoria Leaf Spot"
+    ]
+    if 0 <= index < len(classes):
+        return classes[index]
+    return "Unknown"
 
-    probs = softmax(preds)
-    return probs
-
-def gemini_chat_completion(prompt, model):
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logging.error(f"Gemini API error: {e}")
-        return "⚠️ Sorry, I couldn't process your question right now. Please try again later."
-
-# --- LOAD MODELS ---
-
-@st.cache_resource
-def load_model():
-    try:
-        interpreter = tflite.Interpreter(model_path="plant_disease_recog_model_pwp_quantized.tflite")
-        interpreter.allocate_tensors()
-        return interpreter
-    except Exception as e:
-        logging.error(f"Model loading failed: {e}")
-        st.error(f"❌ Model loading failed: {e}")
-        return None
-
-@st.cache_resource
-def load_gemini():
-    try:
-        genai.configure(api_key=st.secrets["gemini"]["api_key"])
-        return genai.GenerativeModel("models/gemini-flash-latest")
-    except Exception as e:
-        logging.error(f"Gemini model loading failed: {e}")
-        st.warning("⚠️ Gemini AI model not loaded. Chat assistant is disabled.")
-        return None
-
-interpreter = load_model()
-gemini_model = load_gemini()
-
-# --- UI LAYOUT ---
-
+# --- PAGE STYLING ---
 st.markdown("""
-<div style="text-align:center; padding:30px; background:#ECFDF5; border-radius:12px;">
-<h1>🌿 Plant Disease Image Classifier</h1>
-<p>Upload a leaf image to detect plant diseases instantly.</p>
+<style>
+    .main { background-color: #FFFFFF; color: #111827; font-family: 'Inter', sans-serif; }
+    .hero { text-align: center; background: linear-gradient(90deg, #DCFCE7, #F0FDF4);
+            padding: 35px 15px; border-radius: 12px; margin-bottom: 40px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+    .hero-title { font-size: 42px; font-weight: 800; color: #166534; margin-bottom: 10px; }
+    .hero-subtitle { font-size: 16px; color: #4B5563; max-width: 650px; margin: 0 auto; }
+    .section-title { font-size: 18px; font-weight: 600; color: #166534;
+                     margin-top: 10px; margin-bottom: 10px; }
+    .stButton>button { background-color: #22C55E; color: #FFFFFF; border-radius: 6px;
+                       font-weight: 600; border: none; padding: 0.6rem 1.4rem;
+                       transition: background 0.2s ease, transform 0.15s ease; }
+    .stButton>button:hover { background-color: #15803D; transform: scale(1.02); }
+    .footer { text-align: center; font-size: 12px; margin-top: 50px; color: #6B7280; }
+</style>
+""", unsafe_allow_html=True)
+
+# --- HERO SECTION ---
+st.markdown("""
+<div class="hero">
+    <div class="hero-title">🌿 Plant Disease Detector</div>
+    <div class="hero-subtitle">
+        Upload a clear photo of your plant leaf to identify possible diseases instantly.  
+        Get actionable tips to keep your plants healthy.
+    </div>
 </div>
 """, unsafe_allow_html=True)
 
-col1, col2 = st.columns([1.5, 1])
-
-disease = None
-confidence = None
-preds = None
+# --- MAIN LAYOUT ---
+col1, col2 = st.columns([1.5, 3])
 
 with col1:
-    uploaded_file = st.file_uploader(
-        "Upload a leaf image",
-        type=["jpg", "jpeg", "png"]
-    )
+    st.markdown("<div class='section-title'>💡 Care Tips</div>", unsafe_allow_html=True)
+    tips = [
+        "Water plants early in the day to reduce fungal growth.",
+        "Remove and dispose of diseased leaves promptly.",
+        "Use resistant plant varieties when available.",
+        "Maintain proper spacing for airflow.",
+        "Avoid overhead watering to keep leaves dry."
+    ]
+    st.markdown(f"✅ {random.choice(tips)}")
 
-    if uploaded_file:
-        try:
-            image = Image.open(uploaded_file)
-            st.image(image, use_column_width=True)
-        except UnidentifiedImageError:
-            st.error("⚠️ The uploaded file is not a valid image.")
-            image = None
-
-        predict_button = st.button(
-            "🔍 Predict Disease",
-            disabled=uploaded_file is None or interpreter is None or image is None
-        )
-
-        if predict_button and image is not None:
-            if interpreter is None:
-                st.error("Model is not loaded.")
-            else:
-                with st.spinner("Analyzing image..."):
-                    time.sleep(1)  # simulate delay
-
-                    try:
-                        img_array = preprocess_image(image, interpreter)
-                        preds = predict(interpreter, img_array)
-
-                        confidence = float(np.max(preds))
-                        disease = CLASS_NAMES[int(np.argmax(preds))]
-
-                        st.success(f"**Prediction:** {disease}")
-                        st.write(f"**Confidence:** {confidence * 100:.2f}%")
-
-                        st.write("### Other class probabilities:")
-                        for i, cls in enumerate(CLASS_NAMES):
-                            st.write(f"{cls}: {preds[0][i] * 100:.2f}%")
-                    except Exception as e:
-                        st.error(f"Prediction failed: {e}")
+    st.markdown("<div class='section-title'>📊 Quick Facts</div>", unsafe_allow_html=True)
+    st.markdown("""
+    - Plant diseases cause up to 40% crop losses globally.  
+    - Early detection can reduce spread significantly.  
+    - Most fungal diseases thrive in wet conditions.  
+    - Proper sanitation limits infections.
+    """)
 
 with col2:
-    st.subheader("🤖 Plant Disease Assistant")
-    st.write("Ask me about symptoms, treatment, or prevention for the detected plant disease.")
-    prompt = st.chat_input("Type your question here...")
+    st.markdown("<div class='section-title'>📷 Upload Leaf Image</div>", unsafe_allow_html=True)
+    uploaded_file = st.file_uploader("Choose a plant leaf image...", type=["jpg", "jpeg", "png"])
 
-    if prompt:
-        if gemini_model is None:
-            st.warning("Chat assistant is currently unavailable.")
-        else:
-            with st.spinner("Thinking..."):
-                base_context = ""
-                if disease is not None and confidence is not None:
-                    base_context = f"The detected disease is {disease} with a confidence of {confidence * 100:.1f}%. "
+    if uploaded_file is not None:
+        img = Image.open(uploaded_file).convert("RGB")
+        st.image(img, caption="Uploaded Leaf Image", use_column_width=True)
 
-                full_prompt = base_context + "User question: " + prompt
-                response = gemini_chat_completion(full_prompt, gemini_model)
-                st.markdown(response)
+        if st.button("🌱 Detect Disease"):
+            interpreter = load_tflite_model()
+
+            with st.spinner("Analyzing image..."):
+                time.sleep(1)
+                image_np = np.array(img)
+                try:
+                    predictions = predict_with_tflite(interpreter, image_np)
+                    top_index = np.argmax(predictions)
+                    confidence = predictions[top_index]
+
+                    st.markdown("<div class='section-title'>🔍 Prediction Results</div>", unsafe_allow_html=True)
+                    st.metric("Disease", get_class_label(top_index))
+                    st.metric("Confidence", f"{confidence * 100:.2f}%")
+
+                    if top_index == 0:
+                        st.success("Your plant looks healthy! Keep up the good care.")
+                    else:
+                        st.warning(f"Possible disease detected: {get_class_label(top_index)}")
+                        st.info("Consider consulting agricultural experts for treatment options.")
+
+                except Exception as e:
+                    st.error(f"Error during prediction: {type(e).__name__} - {e}")
 
 # --- FOOTER ---
-st.markdown(
-    "<div style='text-align:center; color:#6B7280; margin-top:40px;'>"
-    "© 2025 Plant Disease Classifier | Streamlit + TFLite"
-    "</div>",
-    unsafe_allow_html=True
-)
+st.markdown("<div class='footer'>© 2026 Plant Disease Detector | Powered by Streamlit + TensorFlow Lite</div>", unsafe_allow_html=True)
