@@ -12,22 +12,15 @@ def load_tflite_model(model_path='plant_disease_recog_model_pwp_quantized.tflite
 
 interpreter = load_tflite_model()
 
-# Get input and output details for the TFLite interpreter
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 def preprocess_image(image: Image.Image, input_shape):
-    # Resize to model input size
     image = image.resize((input_shape[1], input_shape[2]))
     img_array = np.array(image).astype(np.float32)
-    
-    # Normalize (adjust if your model needs something else)
     img_array = img_array / 255.0
-    
-    # Add batch dimension
     img_array = np.expand_dims(img_array, axis=0)
     
-    # If model expects uint8 input (common for quantized), convert:
     if input_details[0]['dtype'] == np.uint8:
         img_array = img_array * 255
         img_array = img_array.astype(np.uint8)
@@ -37,15 +30,50 @@ def preprocess_image(image: Image.Image, input_shape):
 def predict(image: Image.Image):
     input_shape = input_details[0]['shape']
     input_data = preprocess_image(image, input_shape)
-    
     interpreter.set_tensor(input_details[0]['index'], input_data)
     interpreter.invoke()
     output_data = interpreter.get_tensor(output_details[0]['index'])
-    
     return output_data
 
-# TODO: Replace this with your exact class names (check number matches your model output)
-CLASS_NAMES = ['Healthy', 'Disease A', 'Disease B']  
+CLASS_NAMES = [
+    'Apple Scab',
+    'Apple Black Rot',
+    'Apple Cedar Rust',
+    'Apple Healthy',
+    'Blueberry Healthy',
+    'Cherry Powdery Mildew',
+    'Cherry Healthy',
+    'Corn Cercospora Leaf Spot',
+    'Corn Common Rust',
+    'Corn Northern Leaf Blight',
+    'Corn Healthy',
+    'Grape Black Rot',
+    'Grape Esca (Black Measles)',
+    'Grape Leaf Blight (Isariopsis Leaf Spot)',
+    'Grape Healthy',
+    'Peach Bacterial Spot',
+    'Peach Healthy',
+    'Pepper Bell Bacterial Spot',
+    'Pepper Bell Healthy',
+    'Potato Early Blight',
+    'Potato Late Blight',
+    'Potato Healthy',
+    'Raspberry Healthy',
+    'Soybean Healthy',
+    'Squash Powdery Mildew',
+    'Strawberry Leaf Scorch',
+    'Strawberry Healthy',
+    'Tomato Bacterial Spot',
+    'Tomato Early Blight',
+    'Tomato Late Blight',
+    'Tomato Leaf Mold',
+    'Tomato Septoria Leaf Spot',
+    'Tomato Spider Mites Two-Spotted Spider Mite',
+    'Tomato Target Spot',
+    'Tomato Yellow Leaf Curl Virus',
+    'Tomato Mosaic Virus',
+    'Tomato Healthy'
+]
 
 st.title("Plant Disease Detection (TFLite Model)")
 
@@ -57,18 +85,16 @@ if uploaded_file:
     
     if st.button("Detect Disease"):
         preds = predict(image)
-        
-        # If output is 2D (batch, classes), flatten it
         if preds.ndim == 2:
             preds = preds[0]
-
+        
         st.write(f"Raw model output: {preds}")
         st.write(f"Output shape: {preds.shape}")
         
         predicted_index = np.argmax(preds)
         st.write(f"Predicted index: {predicted_index}")
         st.write(f"Number of classes: {len(CLASS_NAMES)}")
-
+        
         if predicted_index >= len(CLASS_NAMES):
             st.error("Prediction index exceeds number of class labels! Please check CLASS_NAMES.")
         else:
