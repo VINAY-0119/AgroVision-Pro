@@ -1,121 +1,60 @@
-import streamlit as st
+import os
+import json
 from PIL import Image
+
 import numpy as np
 import tensorflow as tf
-import scipy.special
+import streamlit as st
 
-# Load TFLite model with caching
-@st.cache_resource
-def load_tflite_model(model_path='plant_disease_recog_model_pwp_quantized.tflite'):
-    interpreter = tf.lite.Interpreter(model_path=model_path)
-    interpreter.allocate_tensors()
-    return interpreter
 
-interpreter = load_tflite_model()
+working_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = f"{working_dir}/trained_model/plant_disease_prediction_model.h5"
+# Load the pre-trained model
+model = tf.keras.models.load_model(model_path)
 
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
+# loading the class names
+class_indices = json.load(open(f"{working_dir}/class_indices.json"))
 
-# Replace these class names with your exact 39 classes
-CLASS_NAMES = [
-    'Apple Scab',
-    'Apple Black Rot',
-    'Apple Cedar Rust',
-    'Apple Healthy',
-    'Blueberry Healthy',
-    'Cherry Powdery Mildew',
-    'Cherry Healthy',
-    'Corn Cercospora Leaf Spot',
-    'Corn Common Rust',
-    'Corn Northern Leaf Blight',
-    'Corn Healthy',
-    'Grape Black Rot',
-    'Grape Esca (Black Measles)',
-    'Grape Leaf Blight (Isariopsis Leaf Spot)',
-    'Grape Healthy',
-    'Peach Bacterial Spot',
-    'Peach Healthy',
-    'Pepper Bell Bacterial Spot',
-    'Pepper Bell Healthy',
-    'Potato Early Blight',
-    'Potato Late Blight',
-    'Potato Healthy',
-    'Raspberry Healthy',
-    'Soybean Healthy',
-    'Squash Powdery Mildew',
-    'Strawberry Leaf Scorch',
-    'Strawberry Healthy',
-    'Tomato Bacterial Spot',
-    'Tomato Early Blight',
-    'Tomato Late Blight',
-    'Tomato Leaf Mold',
-    'Tomato Septoria Leaf Spot',
-    'Tomato Spider Mites Two-Spotted Spider Mite',
-    'Tomato Target Spot',
-    'Tomato Yellow Leaf Curl Virus',
-    'Tomato Mosaic Virus',
-    'Tomato Healthy',
-    'Class 38 Placeholder',
-    'Class 39 Placeholder'
-]
 
-def preprocess_image(image: Image.Image):
-    # Resize to model input shape (width, height)
-    width = input_details[0]['shape'][2]
-    height = input_details[0]['shape'][1]
-    image = image.resize((width, height))
-
-    img_array = np.array(image).astype(input_details[0]['dtype'])
-
-    # Normalize if float32 input
-    if input_details[0]['dtype'] == np.float32:
-        img_array = img_array / 255.0
-
+# Function to Load and Preprocess the Image using Pillow
+def load_and_preprocess_image(image_path, target_size=(224, 224)):
+    # Load the image
+    img = Image.open(image_path)
+    # Resize the image
+    img = img.resize(target_size)
+    # Convert the image to a numpy array
+    img_array = np.array(img)
     # Add batch dimension
     img_array = np.expand_dims(img_array, axis=0)
+    # Scale the image values to [0, 1]
+    img_array = img_array.astype('float32') / 255.
     return img_array
 
-def predict(image: Image.Image):
-    input_data = preprocess_image(image)
-    interpreter.set_tensor(input_details[0]['index'], input_data)
-    interpreter.invoke()
-    output = interpreter.get_tensor(output_details[0]['index'])[0]
 
-    # Apply softmax if output not probabilities
-    probs = scipy.special.softmax(output)
+# Function to Predict the Class of an Image
+def predict_image_class(model, image_path, class_indices):
+    preprocessed_img = load_and_preprocess_image(image_path)
+    predictions = model.predict(preprocessed_img)
+    predicted_class_index = np.argmax(predictions, axis=1)[0]
+    predicted_class_name = class_indices[str(predicted_class_index)]
+    return predicted_class_name
 
-    predicted_index = np.argmax(probs)
 
-    # Safety check
-    if predicted_index >= len(CLASS_NAMES):
-        raise ValueError("Prediction index out of bounds!")
+# Streamlit App
+st.title('🌿 Plant Disease Classifier')
 
-    predicted_label = CLASS_NAMES[predicted_index]
-    confidence = probs[predicted_index] * 100
+uploaded_image = st.file_uploader("Upload an image...", type=["jpg", "jpeg", "png"])
 
-    return predicted_label, confidence, probs
+if uploaded_image is not None:
+    image = Image.open(uploaded_image)
+    col1, col2 = st.columns(2)
 
-st.title("Plant Disease Detection")
+    with col1:
+        resized_img = image.resize((150, 150))
+        st.image(resized_img)
 
-uploaded_file = st.file_uploader("Upload a leaf image", type=["jpg", "jpeg", "png"])
-
-if uploaded_file:
-    image = Image.open(uploaded_file).convert('RGB')
-    st.image(image, caption="Uploaded Image", use_column_width=True)
-
-    if st.button("Detect Disease"):
-        label, confidence, probs = predict(image)
-
-        st.success(f"Prediction: **{label}**")
-        st.info(f"Confidence: **{confidence:.2f}%**")
-
-        # Warn on low confidence
-        if confidence < 50:
-            st.warning("Low confidence in prediction; result may be unreliable.")
-
-        # Show top 3 predictions
-        top_k = 3
-        top_indices = np.argsort(probs)[-top_k:][::-1]
-        st.write("Top predictions:")
-        for i in top_indices:
-            st.write(f"{CLASS_NAMES[i]}: {probs[i]*100:.2f}%")
+    with col2:
+        if st.button('Classify'):
+            # Preprocess the uploaded image and predict the class
+            prediction = predict_image_class(model, uploaded_image, class_indices)
+            st.success(f'Prediction: {str(prediction)}')
