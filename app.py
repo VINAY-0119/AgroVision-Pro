@@ -21,7 +21,7 @@ def preprocess_image(image: Image.Image, input_shape):
     image = image.resize((input_shape[1], input_shape[2]))
     img_array = np.array(image).astype(np.float32)
     
-    # Normalize if needed (depends on your model)
+    # Normalize (adjust if your model needs something else)
     img_array = img_array / 255.0
     
     # Add batch dimension
@@ -44,7 +44,7 @@ def predict(image: Image.Image):
     
     return output_data
 
-# Replace with your actual class names
+# TODO: Replace this with your exact class names (check number matches your model output)
 CLASS_NAMES = ['Healthy', 'Disease A', 'Disease B']  
 
 st.title("Plant Disease Detection (TFLite Model)")
@@ -58,13 +58,21 @@ if uploaded_file:
     if st.button("Detect Disease"):
         preds = predict(image)
         
-        # If output is logits or probabilities
+        # If output is 2D (batch, classes), flatten it
         if preds.ndim == 2:
             preds = preds[0]
+
+        st.write(f"Raw model output: {preds}")
+        st.write(f"Output shape: {preds.shape}")
         
         predicted_index = np.argmax(preds)
-        predicted_label = CLASS_NAMES[predicted_index]
-        confidence = preds[predicted_index] * 100
-        
-        st.success(f"Prediction: **{predicted_label}**")
-        st.info(f"Confidence: **{confidence:.2f}%**")
+        st.write(f"Predicted index: {predicted_index}")
+        st.write(f"Number of classes: {len(CLASS_NAMES)}")
+
+        if predicted_index >= len(CLASS_NAMES):
+            st.error("Prediction index exceeds number of class labels! Please check CLASS_NAMES.")
+        else:
+            predicted_label = CLASS_NAMES[predicted_index]
+            confidence = preds[predicted_index] * 100
+            st.success(f"Prediction: **{predicted_label}**")
+            st.info(f"Confidence: **{confidence:.2f}%**")
