@@ -28,6 +28,14 @@ def load_model():
 
 interpreter = load_model()
 
+# --- LOAD GEMINI MODEL ---
+@st.cache_resource
+def load_gemini():
+    genai.configure(api_key=st.secrets["gemini"]["api_key"])
+    return genai.GenerativeModel("models/gemini-flash-latest")
+
+gemini_model = load_gemini()
+
 # --- CLASS NAMES ---
 CLASS_NAMES = [
     "Apple Scab",
@@ -38,10 +46,21 @@ CLASS_NAMES = [
 ]
 
 # --- IMAGE PREPROCESSING ---
-def preprocess_image(image, target_size=(224, 224)):
-    image = image.convert("RGB")
-    image = image.resize(target_size)
-    img = np.array(image, dtype=np.float32) / 255.0
+def preprocess_image(image, interpreter, target_size=(224, 224)):
+    input_details = interpreter.get_input_details()
+    input_dtype = input_details[0]['dtype']
+
+    image = image.convert("RGB").resize(target_size)
+
+    if input_dtype == np.uint8:
+        # Quantized model expects uint8 in [0, 255]
+        img = np.array(image, dtype=np.uint8)
+    elif input_dtype == np.float32:
+        # Float model expects normalized float32 in [0, 1]
+        img = np.array(image, dtype=np.float32) / 255.0
+    else:
+        raise ValueError(f"Unsupported input dtype: {input_dtype}")
+
     img = np.expand_dims(img, axis=0)
     return img
 
@@ -54,13 +73,16 @@ def predict(interpreter, img_array):
     interpreter.invoke()
 
     preds = interpreter.get_tensor(output_details[0]['index'])
+
+    scale, zero_point = output_details[0]['quantization']
+    if scale > 0:
+        preds = scale * (preds - zero_point)
+
     return preds
 
 # --- GEMINI CHAT ---
-def gemini_chat_completion(prompt):
+def gemini_chat_completion(prompt, model):
     try:
-        genai.configure(api_key=st.secrets["gemini"]["api_key"])
-        model = genai.GenerativeModel("models/gemini-flash-latest")
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
@@ -77,6 +99,10 @@ st.markdown("""
 # --- MAIN ---
 col1, col2 = st.columns([1.5, 1])
 
+disease = None
+confidence = None
+preds = None
+
 with col1:
     uploaded_file = st.file_uploader(
         "Upload a leaf image",
@@ -87,18 +113,27 @@ with col1:
         image = Image.open(uploaded_file)
         st.image(image, use_column_width=True)
 
-        if interpreter and st.button("🔍 Predict Disease"):
-            with st.spinner("Analyzing image..."):
-                time.sleep(1)
+        predict_button = st.button("🔍 Predict Disease", disabled=uploaded_file is None or interpreter is None)
 
-                img_array = preprocess_image(image)
-                preds = predict(interpreter, img_array)
+        if predict_button:
+            if interpreter is None:
+                st.error("Model is not loaded.")
+            else:
+                with st.spinner("Analyzing image..."):
+                    time.sleep(1)  # Simulate loading delay
 
-                confidence = float(np.max(preds))
-                disease = CLASS_NAMES[int(np.argmax(preds))]
+                    img_array = preprocess_image(image, interpreter)
+                    preds = predict(interpreter, img_array)
 
-                st.success(f"**Prediction:** {disease}")
-                st.write(f"**Confidence:** {confidence * 100:.2f}%")
+                    confidence = float(np.max(preds))
+                    disease = CLASS_NAMES[int(np.argmax(preds))]
+
+                    st.success(f"**Prediction:** {disease}")
+                    st.write(f"**Confidence:** {confidence * 100:.2f}%")
+
+                    st.write("### Other class probabilities:")
+                    for i, cls in enumerate(CLASS_NAMES):
+                        st.write(f"{cls}: {preds[0][i]*100:.2f}%")
 
 with col2:
     st.subheader("🤖 Plant Disease Assistant")
@@ -106,7 +141,13 @@ with col2:
 
     if prompt:
         with st.spinner("Thinking..."):
-            st.markdown(gemini_chat_completion(prompt))
+            base_context = ""
+            if disease is not None and confidence is not None:
+                base_context = f"The detected disease is {disease} with a confidence of {confidence*100:.1f}%. "
+
+            full_prompt = base_context + "User question: " + prompt
+            response = gemini_chat_completion(full_prompt, gemini_model)
+            st.markdown(response)
 
 # --- FOOTER ---
 st.markdown(
