@@ -5,38 +5,7 @@ import tflite_runtime.interpreter as tflite
 import google.generativeai as genai
 import time
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(
-    page_title="Plant Disease Image Classifier",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
-
-# --- LOAD TFLITE MODEL ---
-@st.cache_resource
-def load_model():
-    try:
-        interpreter = tflite.Interpreter(
-            model_path="plant_disease_recog_model_pwp_quantized.tflite"
-        )
-        interpreter.allocate_tensors()
-        return interpreter
-    except Exception as e:
-        st.error(f"❌ Model loading failed: {e}")
-        return None
-
-interpreter = load_model()
-
-# --- LOAD GEMINI MODEL ---
-@st.cache_resource
-def load_gemini():
-    genai.configure(api_key=st.secrets["gemini"]["api_key"])
-    return genai.GenerativeModel("models/gemini-flash-latest")
-
-gemini_model = load_gemini()
-
-# --- CLASS NAMES ---
+# --- CONSTANTS ---
 CLASS_NAMES = [
     "Apple Scab",
     "Black Rot",
@@ -45,7 +14,15 @@ CLASS_NAMES = [
     "Powdery Mildew",
 ]
 
-# --- IMAGE PREPROCESSING ---
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="Plant Disease Image Classifier",
+    page_icon="🌿",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# --- HELPER FUNCTIONS ---
 def preprocess_image(image, interpreter, target_size=(224, 224)):
     input_details = interpreter.get_input_details()
     input_dtype = input_details[0]['dtype']
@@ -53,10 +30,8 @@ def preprocess_image(image, interpreter, target_size=(224, 224)):
     image = image.convert("RGB").resize(target_size)
 
     if input_dtype == np.uint8:
-        # Quantized model expects uint8 in [0, 255]
         img = np.array(image, dtype=np.uint8)
     elif input_dtype == np.float32:
-        # Float model expects normalized float32 in [0, 1]
         img = np.array(image, dtype=np.float32) / 255.0
     else:
         raise ValueError(f"Unsupported input dtype: {input_dtype}")
@@ -64,7 +39,6 @@ def preprocess_image(image, interpreter, target_size=(224, 224)):
     img = np.expand_dims(img, axis=0)
     return img
 
-# --- PREDICTION ---
 def predict(interpreter, img_array):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
@@ -80,7 +54,6 @@ def predict(interpreter, img_array):
 
     return preds
 
-# --- GEMINI CHAT ---
 def gemini_chat_completion(prompt, model):
     try:
         response = model.generate_content(prompt)
@@ -88,7 +61,28 @@ def gemini_chat_completion(prompt, model):
     except Exception as e:
         return f"⚠️ Gemini API error: {e}"
 
-# --- HERO ---
+# --- LOAD MODELS ---
+@st.cache_resource
+def load_model():
+    try:
+        interpreter = tflite.Interpreter(
+            model_path="plant_disease_recog_model_pwp_quantized.tflite"
+        )
+        interpreter.allocate_tensors()
+        return interpreter
+    except Exception as e:
+        st.error(f"❌ Model loading failed: {e}")
+        return None
+
+@st.cache_resource
+def load_gemini():
+    genai.configure(api_key=st.secrets["gemini"]["api_key"])
+    return genai.GenerativeModel("models/gemini-flash-latest")
+
+interpreter = load_model()
+gemini_model = load_gemini()
+
+# --- UI LAYOUT ---
 st.markdown("""
 <div style="text-align:center; padding:30px; background:#ECFDF5; border-radius:12px;">
 <h1>🌿 Plant Disease Image Classifier</h1>
@@ -96,7 +90,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- MAIN ---
 col1, col2 = st.columns([1.5, 1])
 
 disease = None
@@ -133,7 +126,7 @@ with col1:
 
                     st.write("### Other class probabilities:")
                     for i, cls in enumerate(CLASS_NAMES):
-                        st.write(f"{cls}: {preds[0][i]*100:.2f}%")
+                        st.write(f"{cls}: {preds[0][i] * 100:.2f}%")
 
 with col2:
     st.subheader("🤖 Plant Disease Assistant")
@@ -143,7 +136,7 @@ with col2:
         with st.spinner("Thinking..."):
             base_context = ""
             if disease is not None and confidence is not None:
-                base_context = f"The detected disease is {disease} with a confidence of {confidence*100:.1f}%. "
+                base_context = f"The detected disease is {disease} with a confidence of {confidence * 100:.1f}%. "
 
             full_prompt = base_context + "User question: " + prompt
             response = gemini_chat_completion(full_prompt, gemini_model)
