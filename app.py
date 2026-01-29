@@ -2,7 +2,9 @@ import streamlit as st
 from PIL import Image
 import numpy as np
 import tensorflow as tf
+import scipy.special
 
+# Load TFLite model and allocate tensors
 @st.cache_resource
 def load_tflite_model(model_path='plant_disease_recog_model_pwp_quantized.tflite'):
     interpreter = tf.lite.Interpreter(model_path=model_path)
@@ -15,16 +17,20 @@ input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
 
 def preprocess_image(image: Image.Image, input_shape):
-    image = image.resize((input_shape[1], input_shape[2]))
+    # Resize image to expected shape
+    image = image.resize((input_shape[2], input_shape[1]))  # width, height
     img_array = np.array(image)
-    
+
+    # Preprocessing depends on input dtype
     if input_details[0]['dtype'] == np.uint8:
+        # For quantized model, inputs are uint8 0-255
         if img_array.dtype != np.uint8:
             img_array = img_array.astype(np.uint8)
         img_array = np.expand_dims(img_array, axis=0)
         return img_array
-    
+
     else:
+        # For float model, normalize to [0,1]
         img_array = img_array.astype(np.float32) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
         return img_array
@@ -86,23 +92,27 @@ uploaded_file = st.file_uploader("Upload a leaf image", type=["jpg", "jpeg", "pn
 if uploaded_file:
     image = Image.open(uploaded_file).convert('RGB')
     st.image(image, caption="Uploaded Image", use_column_width=True)
-    
+
     if st.button("Detect Disease"):
         preds = predict(image)
         if preds.ndim == 2:
             preds = preds[0]
-        
+
         st.write(f"Raw model output: {preds}")
         st.write(f"Output shape: {preds.shape}")
-        
-        predicted_index = np.argmax(preds)
+
+        # Apply softmax to get probabilities
+        probs = scipy.special.softmax(preds)
+        st.write(f"Softmax probabilities: {probs}")
+
+        predicted_index = np.argmax(probs)
         st.write(f"Predicted index: {predicted_index}")
         st.write(f"Number of classes: {len(CLASS_NAMES)}")
-        
+
         if predicted_index >= len(CLASS_NAMES):
             st.error("Prediction index exceeds number of class labels! Please check CLASS_NAMES.")
         else:
             predicted_label = CLASS_NAMES[predicted_index]
-            confidence = preds[predicted_index] * 100
+            confidence = probs[predicted_index] * 100
             st.success(f"Prediction: **{predicted_label}**")
             st.info(f"Confidence: **{confidence:.2f}%**")
