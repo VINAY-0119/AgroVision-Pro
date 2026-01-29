@@ -1,3 +1,4 @@
+python-3.10.11
 streamlit
 tensorflow-cpu==2.13.0
 numpy
