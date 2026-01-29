@@ -1,6 +1,5 @@
-python-3.10.13
-streamlit
-numpy
-pillow
-google-generativeai
-tflite-runtime==2.12.0
+streamlit==1.26.0
+numpy==1.24.3
+pillow==10.0.0
+tflite-runtime==2.11.0
+google-generative-ai==0.1.1
